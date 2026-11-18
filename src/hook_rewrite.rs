@@ -220,8 +220,11 @@ fn next_word(s: &str) -> Option<(&str, &str)> {
 /// word, so `-C "a log"` cannot pass for a subcommand.
 fn piece_writes(mut rest: &str) -> bool {
     while let Some((w, r)) = next_word(rest) {
+        // A piece cut inside a quoted `|` has an unclosed quote, so its one word is the whole input:
+        // recursing into it would never end.
+        let nested = w.len() < rest.len() && w.contains(char::is_whitespace);
         rest = r;
-        if (w.contains(char::is_whitespace) && piece_writes(w)) || (command_word(w).eq_ignore_ascii_case("git") && !git_reads(r)) {
+        if (nested && piece_writes(w)) || (command_word(w).eq_ignore_ascii_case("git") && !git_reads(r)) {
             return true;
         }
     }
@@ -531,6 +534,8 @@ impl Router {
         let th = self.cfg.threshold_bytes;
         let resp = &ev.tool_response;
         let input = &ev.tool_input;
+        // A routed Read's replaced output (what the tool returned) and file.
+        let mut replaced_read: Option<(usize, String)> = None;
         let (full, meta, extra_stderr) = match ev.tool_name.as_str() {
             "Bash" | "PowerShell" => {
                 let (cmd, exit) = unwrite(s(input, "command"), s(resp, "stdout"));
@@ -602,6 +607,7 @@ impl Router {
                 }
                 let path = s(&file, "filePath").to_string();
                 let mut content = s(&file, "content").to_string();
+                replaced_read = Some((content.len(), path.clone()));
                 // A whole-file Read can come back cut short (Claude Code caps
                 // it); the handle keeps the whole file so the outline and
                 // every slice cover all of it.
@@ -661,11 +667,25 @@ impl Router {
         let row = h.put(full.as_bytes(), &meta)?;
         let shape = Handles::shape_of(&row, &full);
         let digest = crate::digest::digest(&row.id, &row.meta.label, shape, &full, meta.exit_code.map(|c| c as i32), h.cfg.digest_bytes);
-        // A routed Read is logged with no saving credited: the ledger cannot
-        // see the follow-up reads, which made it overstate (ATLAS-HOOK-VALUE:0012).
+        // A routed Read logs the output it replaced and where it was read, but
+        // the ledger credits it nothing (ATLAS-HOOK-VALUE:0012: the follow-up
+        // reads made it overstate); the report judges it against the later
+        // Reads of the file in its transcript (E4, ATLAS-EFFICIENCY:0006).
         // Any other output saves at most what Claude Code would have shown of it (#215).
-        let cf = (ev.tool_name != "Read").then_some(crate::tokens::Counterfactual { grep: 0, read: crate::tokens::shown_bytes(&full) });
-        let _ = crate::tokens::log_row(h.conn(), &format!("route:{}", ev.tool_name), digest.len(), cf);
+        match &replaced_read {
+            Some((replaced, path)) => {
+                let transcript = match (ev.agent_id.is_empty(), ev.transcript_path.is_empty()) {
+                    (false, false) => crate::hooks::subagent_transcript(&ev.transcript_path, &ev.agent_id).to_string_lossy().into_owned(),
+                    _ => ev.transcript_path.clone(),
+                };
+                let at = crate::tokens::ReadAt { session: &ev.session_id, transcript: &transcript, path, tool_use: &ev.tool_use_id };
+                let _ = crate::tokens::log_read(h.conn(), digest.len(), *replaced, &at);
+            }
+            None => {
+                let cf = crate::tokens::Counterfactual { grep: 0, read: crate::tokens::shown_bytes(&full) };
+                let _ = crate::tokens::log_row(h.conn(), &format!("route:{}", ev.tool_name), digest.len(), Some(cf));
+            }
+        }
         let mut out = resp.clone();
         let o = out.as_object_mut().ok_or_else(|| Error::InvalidArgument("tool_response".into()))?;
         match ev.tool_name.as_str() {
@@ -860,12 +880,18 @@ impl Router {
     /// Records a failure of hook work that is not a tool call's routing
     /// (a re-index) as a miss.
     pub fn miss_text(&mut self, query: &str, e: &crate::Error) {
+        self.miss_reason(query, &e.to_string());
+    }
+
+    /// Records one miss row of hook work with this query and reason (tool
+    /// `route`, client `atlas-hook`).
+    pub fn miss_reason(&mut self, query: &str, reason: &str) {
         if let Ok(h) = self.handles() {
             let c = h.conn();
             let _ = crate::store::guarded(c, || {
                 c.execute(
                     "INSERT INTO misses(time, tool, query, returned, found, reason, client) VALUES(?1, 'route', ?2, '', '', ?3, 'atlas-hook')",
-                    rusqlite::params![crate::store::utc(std::time::SystemTime::now()), query, e.to_string()],
+                    rusqlite::params![crate::store::utc(std::time::SystemTime::now()), query, reason],
                 )?;
                 Ok(())
             });
@@ -1591,5 +1617,19 @@ mod tests {
         assert_eq!(read_note("x.rs", 20, 65, &items), "atlas: x.rs lines 20-65 cut [impl Store 1-300] [fn a 10-30]");
         assert_eq!(read_note("x.rs", 1, 300, &items), "");
         assert_eq!(read_note("x.rs", 36, 50, &items), "atlas: x.rs lines 36-50 cut [impl Store 1-300] [fn b 35-60]");
+    }
+
+    #[test]
+    fn a_quoted_separator_does_not_overflow_the_stack() {
+        // `git_writes` cuts the command at every `|`, `&`, `;` and `$`, quoted or not, so `grep 'a|b' f`
+        // leaves the pieces `grep 'a` and `b' f`. The second opens a quote it never closes, `next_word`
+        // returns all of it as one word, and `piece_writes` recursed into that word forever: the hook
+        // aborted with a stack overflow (exit 134).
+        for cmd in ["grep 'a|b' f", "grep -E \"x;y\" f", "rg 'a&b' src", "grep '$HOME|x' f", "git log --grep 'a|b'"] {
+            assert!(routable(cmd), "{cmd} is a read and stays routed");
+        }
+        // A write is still caught next to a quoted separator.
+        assert!(!routable("grep 'a|b' f; git push"));
+        assert!(!routable("git commit -m 'a|b'"));
     }
 }
