@@ -425,7 +425,7 @@ refused without being repeated.
 | `lean.pr_digest` | digests `gh pr diff` and `gh pr view` output per file and per comment, with rounds; false sends it the ordinary route, as before v0.4.0 (default true; see [[Handles and digests]]) |
 | `lean.route_read` | which whole-file Reads become a digest: `outputs` (the default) digests only a tool's or a background task's saved output (a path under `tool-results/`, or a `.output` file under `tasks/`) from `lean.handles.threshold_bytes`; `tuned` digests any file from `lean.route_read_min_kb`; `all` digests any file from `lean.handles.threshold_bytes`, as before v0.5.0; `off` passes every Read whole. In every mode a ranged Read (`offset` or `limit`) and a second whole Read of a file the session already holds a read handle for pass whole. The old boolean still works: true is `tuned`, false is `off` |
 | `lean.route_read_min_kb` | the smallest file `tuned` digests, in KB (default 32; used by `tuned` only) |
-| `lean.annotate` | false stops the code-range annotations on Grep, Read and shell reads (default true) |
+| `lean.annotate` | false stops the code-range annotations on Grep, Read and shell reads, Markdown sections included (default true) |
 | `lean.handles` | the handle store's settings, below |
 | `lean.digests` | the digests' settings, below |
 | `lean.handles.threshold_bytes` | a tool result over this becomes a handle and a digest (default 12 KB) |

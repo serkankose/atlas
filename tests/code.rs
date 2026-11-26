@@ -439,6 +439,41 @@ fn impl_blocks_are_items_so_methods_and_gaps_between_them_annotate() {
     let impls: Vec<String> = v["impls"].as_array().unwrap().iter().map(|h| format!("{}-{} {}", h["line"], h["end_line"], h["container"].as_str().unwrap())).collect();
     assert_eq!(impls, [format!("{dbg}-{} Debug for Router", dbg + 4), format!("{imp}-{imp_end} Router")]);
 }
+/// A Markdown file's headings are its items: a Read window that cuts a
+/// section names it and where it ends, and a Grep hit names the section it
+/// sits in. A `#` line inside a fenced block is no heading, and a section's
+/// trailing blank lines are not its own.
+#[test]
+fn markdown_reads_and_greps_name_the_sections_they_cut() {
+    let f = fixture("code-markdown");
+    let md = "# Guide\n\nIntro.\n\n## Install\n\nStep one.\n```text\n## not a heading\n```\nStep two.\n\n### Linux\napt.\n\n## Use\nRun it.\n";
+    write(&f.root.join("docs/guide.md"), md);
+    drop(atlas::store::Store::open(&f.db, vaults(&f.db)).unwrap());
+    let path = f.root.join("docs/guide.md").to_string_lossy().replace('\\', "/");
+    let cwd = f.root.to_string_lossy().replace('\\', "/");
+    let mut router = atlas::hook_rewrite::Router::with_db(&f.db, None);
+    let lines: Vec<&str> = md.lines().collect();
+    let read = |a: usize, b: usize| {
+        atlas::hooks::HookEvent::from_value(&json!({
+            "hook_event_name": "PostToolUse", "session_id": "s", "tool_name": "Read", "cwd": cwd,
+            "tool_input": {"file_path": path, "offset": a, "limit": b - a + 1},
+            "tool_response": {"type": "text", "file": {"filePath": path, "content": lines[a - 1..b].join("\n"), "numLines": b - a + 1, "startLine": a, "totalLines": lines.len()}}
+        }))
+    };
+    let (u, note) = router.annotate(&read(6, 8)).unwrap();
+    assert!(u.is_none());
+    assert_eq!(note, "atlas: docs/guide.md lines 6-8 cut [# Guide 1-17] [## Install 5-14]");
+    // A window holding the whole of a section cuts only its parent.
+    assert_eq!(router.annotate(&read(16, 17)).unwrap().1, "atlas: docs/guide.md lines 16-17 cut [# Guide 1-17]");
+    let grep = atlas::hooks::HookEvent::from_value(&json!({
+        "hook_event_name": "PostToolUse", "session_id": "s", "tool_name": "Grep", "cwd": cwd,
+        "tool_input": {"pattern": "a", "path": cwd},
+        "tool_response": {"mode": "content", "content": "docs/guide.md:14:apt.\ndocs/guide.md:9:## not a heading", "numLines": 2}
+    }));
+    let (u, _) = router.annotate(&grep).unwrap();
+    assert_eq!(u.expect("annotated")["content"].as_str().unwrap(), "docs/guide.md:14:apt. [### Linux 13-14]\ndocs/guide.md:9:## not a heading [## Install 5-14]");
+}
+
 #[test]
 fn shell_reads_are_annotated_like_grep_and_read() {
     let f = fixture("code-shell");

@@ -792,7 +792,7 @@ impl Router {
                 let input_path = s(&ev.tool_input, "path");
                 let single = !input_path.is_empty() && Path::new(input_path).is_file();
                 let conn = self.handles()?.conn();
-                let out = annotate_grep(content, &ev.cwd, single.then_some(input_path), &mut |p| crate::code::file_items(conn, p))?;
+                let out = annotate_grep(content, &ev.cwd, single.then_some(input_path), &mut |p| crate::code::read_items(conn, p))?;
                 if out.len() == content.len() {
                     return Ok((None, String::new()));
                 }
@@ -812,7 +812,7 @@ impl Router {
                 }
                 let path = s(&file, "filePath").to_string();
                 let conn = self.handles()?.conn();
-                let Some(items) = crate::code::file_items(conn, &path)? else { return Ok((None, String::new())) };
+                let Some(items) = crate::code::read_items(conn, &path)? else { return Ok((None, String::new())) };
                 Ok((None, read_note(&relative(&path, &ev.cwd), start, start + shown - 1, &items)))
             }
             "Bash" | "PowerShell" => {
@@ -853,7 +853,7 @@ impl Router {
                                 }
                                 (None, None) => continue,
                             };
-                            let Some(items) = crate::code::file_items(conn, &abs)? else { continue };
+                            let Some(items) = crate::code::read_items(conn, &abs)? else { continue };
                             let note = read_note(&relative(&abs, &ev.cwd), a, b, &items);
                             if !note.is_empty() {
                                 notes.push(note);
@@ -861,7 +861,7 @@ impl Router {
                         }
                         ShellRead::Grep { single } => {
                             let single = single.map(|f| absolute(&f, &seg.dir)).filter(|f| Path::new(f).is_file());
-                            let done = annotate_grep(&text, &seg.dir, single.as_deref(), &mut |p| crate::code::file_items(conn, p))?;
+                            let done = annotate_grep(&text, &seg.dir, single.as_deref(), &mut |p| crate::code::read_items(conn, p))?;
                             if !splice(&mut out, seg.from, seg.to, &done) {
                                 unfit.push(format!("lines {}..{} annotated as {}", seg.from, seg.to, done.split('\n').count()));
                             }

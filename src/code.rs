@@ -2515,6 +2515,33 @@ fn file_row(conn: &Connection, root: &str, rel: &str) -> Result<Option<(i64, Str
     Ok(conn.query_row(sql, params![root, rel], |r| Ok((r.get(0)?, r.get(1)?))).optional()?)
 }
 
+/// The largest Markdown file [`read_items`] reads for its headings.
+const MARKDOWN_ITEMS_BYTES: u64 = 2 << 20;
+
+/// The items the read and grep annotations name in a file: a code file's
+/// from the index ([`file_items`]), a Markdown file's (`.md`, `.markdown`)
+/// headings and their sections, read from the file as it is now (kind
+/// `##` for a second-level heading). `None` for a file neither covers.
+///
+/// # Errors
+///
+/// [`Error::Db`] from SQLite.
+pub fn read_items(conn: &Connection, path: &str) -> Result<Option<Vec<Item>>> {
+    let md = Path::new(path).extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("md") || e.eq_ignore_ascii_case("markdown"));
+    if !md {
+        return file_items(conn, path);
+    }
+    if fs::metadata(path).map_or(true, |m| !m.is_file() || m.len() > MARKDOWN_ITEMS_BYTES) {
+        return Ok(None);
+    }
+    let Ok(text) = fs::read_to_string(path) else { return Ok(None) };
+    let items: Vec<Item> = crate::markdown::heading_ranges(&text)
+        .into_iter()
+        .map(|(level, name, line, end)| Item { name, kind: "#".repeat(level), line, end })
+        .collect();
+    Ok((!items.is_empty()).then_some(items))
+}
+
 /// The definitions of an indexed file, sorted by first line, when the code
 /// index covers it and is current for it.
 ///

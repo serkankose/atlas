@@ -535,6 +535,28 @@ pub fn headings(text: &str) -> Vec<Heading> {
     out
 }
 
+/// Each ATX heading's section as lines: `(level, text, first, last)`, 1-based.
+/// A section runs from its heading line to the line before the next heading
+/// of the same or a higher level, or to the end of the note, with trailing
+/// blank lines left out; a nested section lies inside its parent's.
+pub fn heading_ranges(text: &str) -> Vec<(usize, String, u32, u32)> {
+    let ls = lines(text);
+    let line_of = |start: usize| ls.partition_point(|&(s, _, _)| s < start) as u32 + 1;
+    let blank = |n: u32| ls.get(n as usize - 1).is_some_and(|&(s, e, _)| text[s..e].trim().is_empty());
+    let hs = headings(text);
+    let mut out = Vec::with_capacity(hs.len());
+    for (k, h) in hs.iter().enumerate() {
+        let first = line_of(h.start);
+        let next = hs[k + 1..].iter().find(|x| x.level <= h.level).map_or(ls.len() as u32 + 1, |x| line_of(x.start));
+        let mut last = next - 1;
+        while last > first && blank(last) {
+            last -= 1;
+        }
+        out.push((h.level, h.text.clone(), first, last));
+    }
+    out
+}
+
 /// A heading's section: from just after the heading line to the next heading
 /// of the same or a higher level, or the end of the note.
 #[derive(Debug, Clone)]

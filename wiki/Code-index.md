@@ -287,7 +287,11 @@ of guessing a window:
 - shell reads get the same: `grep -n`, `rg -n` and `Select-String` lines get the suffix, and a `sed -n 'A,Bp'`,
   `head`, `tail` or `Get-Content` window gets the Read note.
 
-Files the index does not cover, or that changed since it was built, are left as they are. A file changed by
+Markdown files (`.md`, `.markdown`, up to 2 MB) get the same from their headings, read from the file as it is:
+each ATX heading's section runs to the next heading of its level or above (a nested one inside its parent's),
+named by its level, as in `[## Install 5-14]`. A `#` line in a fenced block is no heading.
+
+Other files the index does not cover, or that changed since it was built, are left as they are. A file changed by
 Edit, Write or MultiEdit is re-indexed as soon as the edit lands (a Rust file by the line scan, a Go file by
 the scanner, as is a TypeScript, JavaScript, C#, Python, Java or Kotlin file: definitions and ranges at once, its
 references at the root's next full run), so its next read is
@@ -305,7 +309,7 @@ annotated again.
 | Projects and multi-repo, the repository graph | any |
 | Hooks: recall, handoffs, the context cap, routing to handles | any |
 | `symbol`: definitions, references, callers, impl edges | Rust, WGSL, Protocol Buffers, Go (scip-go when found), TypeScript and JavaScript (scip-typescript when found), C# (scip-dotnet when found), Python (scip-python when found, not on Windows), Java (scip-java when found, not on Windows); any of them from a prebuilt `index.scip`; else definitions only from the scanner, and always for Kotlin; any language with a SCIP indexer, from a `.scip` file given with `--code-index --scip FILE` (tested with scip-go, scip-typescript, scip-dotnet, scip-python and scip-java output) |
-| Item ranges on Read and shell reads, Grep annotations | Rust, WGSL, Protocol Buffers, Go, TypeScript, JavaScript, C#, Python, Java, Kotlin; the languages of a `--scip` file until one of their files changes |
+| Item ranges on Read and shell reads, Grep annotations | Rust, WGSL, Protocol Buffers, Go, TypeScript, JavaScript, C#, Python, Java, Kotlin, Markdown (its headings' sections); the languages of a `--scip` file until one of their files changes |
 | rpcs: generated stubs, exact callers and server implementations (`symbol` of an rpc) | Go, TypeScript, JavaScript, C#, Python, Java, Kotlin (stubs and calls through them from a SCIP index; implementations from SCIP impl edges or the scanner's type headers); word call sites in any language's source files where no index resolved the call |
 | References from one code root into another (a package another root defines) | any language whose SCIP indexer names its packages: Go, TypeScript, JavaScript, Python, Java, Rust; calls into another root's generated gRPC stubs as rpc call sites. Not C# (scip-dotnet writes no package name for a project's own symbols) and not scanner-only roots |
 | Build and test digests with failures by test | `cargo build`, `cargo test`, `cargo nextest`, `go test` (plain, `-v` and `-json`), jest, vitest, `dotnet test`, pytest, Maven (Surefire) and Gradle test output; other build tools and test runners get the generic digest |
